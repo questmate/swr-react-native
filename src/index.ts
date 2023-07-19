@@ -1,4 +1,4 @@
-import useSWR, { SWRResponse, SWRConfiguration, Key } from 'swr'
+import useSWR, { SWRResponse, SWRConfiguration, Key, Middleware } from 'swr'
 import { useRef, useEffect } from 'react'
 import { AppState, Platform } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
@@ -11,8 +11,8 @@ type Props<Data, Error> = {
    */
   mutate: SWRResponse<Data, Error>['mutate']
 } & Pick<
-  SWRConfiguration,
-  'revalidateOnFocus' | 'revalidateOnReconnect' | 'focusThrottleInterval'
+    SWRConfiguration,
+    'revalidateOnFocus' | 'revalidateOnReconnect' | 'focusThrottleInterval'
 >
 
 interface AppStateAddEventListenerReturn {
@@ -22,10 +22,47 @@ interface AppStateAddEventListenerReturn {
 /**
  * swr-react-native
  *
+ * This is the preferred way to configure swr for react-native.
+ * This supports avoiding unnecessary refreshes in nested screens when refreshInterval is set.
+ *
+ */
+export const swrNativeMiddleware: Middleware = (useSWRNext) => {
+  return (key, fetcher, config) => {
+    const navigation = useNavigation()
+
+    const swr = useSWRNext(key, fetcher, {
+      ...config,
+      isPaused() {
+        const isPaused = config.isPaused?.() ?? false
+
+        // do not override if explicitly set to pause
+        if (isPaused) {
+          return true
+        }
+
+        return !config.refreshWhenHidden && !navigation.isFocused()
+      },
+    })
+
+    useSWRNativeRevalidate({
+      mutate: swr.mutate,
+      revalidateOnFocus: config.revalidateOnFocus,
+      revalidateOnReconnect: config.revalidateOnReconnect,
+      focusThrottleInterval: config.focusThrottleInterval,
+    })
+
+    return swr
+  }
+}
+
+/**
+ * swr-react-native
+ *
  * This helps you revalidate your SWR calls, based on navigation actions in `react-navigation`.
+ * This hook is not recommended to be used directly but is exported anyway for compatibility.
  */
 export function useSWRNativeRevalidate<Data = any, Error = any>(
-  props: Props<Data, Error>
+    props: Props<Data, Error>
 ) {
   const {
     mutate,
@@ -43,11 +80,11 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
     fetchRef.current = mutate
   })
   const focusCount = useRef(
-    Platform.select({
-      // react-navigation fire a focus event on the initial mount, but not on web
-      web: 1,
-      default: 0,
-    })
+      Platform.select({
+        // react-navigation fire a focus event on the initial mount, but not on web
+        web: 1,
+        default: 0,
+      })
   )
 
   const previousAppState = useRef(AppState.currentState)
@@ -55,18 +92,18 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
 
   useEffect(() => {
     let unsubscribeReconnect: ReturnType<
-      typeof NetInfo.addEventListener
+        typeof NetInfo.addEventListener
     > | null = null
     if (revalidateOnReconnect && Platform.OS !== 'web') {
       // inline require to avoid breaking SSR when window doesn't exist
       const Network: typeof NetInfo = require('@react-native-community/netinfo')
-        .default
+          .default
       // SWR does all of this on web.
       unsubscribeReconnect = Network.addEventListener((state) => {
         if (
-          previousNetworkState.current?.isInternetReachable === false &&
-          state.isConnected &&
-          state.isInternetReachable
+            previousNetworkState.current?.isInternetReachable === false &&
+            state.isConnected &&
+            state.isInternetReachable
         ) {
           fetchRef.current()
         }
@@ -80,9 +117,9 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
         return
       }
       const isThrottled =
-        focusThrottleInterval &&
-        lastFocusedAt.current &&
-        Date.now() - lastFocusedAt.current <= focusThrottleInterval
+          focusThrottleInterval &&
+          lastFocusedAt.current &&
+          Date.now() - lastFocusedAt.current <= focusThrottleInterval
 
       if (!isThrottled) {
         lastFocusedAt.current = Date.now()
@@ -92,10 +129,10 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
 
     const onAppStateChange = (nextAppState: AppState['currentState']) => {
       if (
-        previousAppState.current.match(/inactive|background/) &&
-        nextAppState === 'active' &&
-        // swr handles this on web.
-        Platform.OS !== 'web'
+          previousAppState.current.match(/inactive|background/) &&
+          nextAppState === 'active' &&
+          // swr handles this on web.
+          Platform.OS !== 'web'
       ) {
         onFocus()
       }
@@ -109,8 +146,8 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
     if (revalidateOnFocus) {
       unsubscribeFocus = addListener('focus', onFocus)
       unsubscribeAppStateChange = AppState.addEventListener(
-        'change',
-        onAppStateChange
+          'change',
+          onAppStateChange
       )
     }
 
@@ -138,10 +175,10 @@ export function useSWRNativeRevalidate<Data = any, Error = any>(
 
 type Fetcher<Data> = ((...args: any) => Data | Promise<Data>) | null
 
-const useSWRNative = <Data = any, Error = any>(
-  key: Key,
-  fn: Fetcher<Data> = null,
-  config?: SWRConfiguration<Data, Error>
+export const useSWRNative = <Data = any, Error = any>(
+    key: Key,
+    fn: Fetcher<Data> = null,
+    config?: SWRConfiguration<Data, Error>
 ) => {
   const swr = useSWR<Data, Error>(key, fn, config)
 
@@ -155,4 +192,9 @@ const useSWRNative = <Data = any, Error = any>(
   return swr
 }
 
+/**
+ * swr-react-native
+ *
+ * This hook is not recommended to be used any more but is exported anyway for compatibility.
+ */
 export default useSWRNative
